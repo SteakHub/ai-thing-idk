@@ -46,5 +46,6 @@ def chat():
     return jsonify({"response": response.strip()})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 8080))
+    print(f"Starting Flask app on port {port}")
     app.run(host="0.0.0.0", port=port)
