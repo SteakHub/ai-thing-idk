@@ -5,44 +5,45 @@ import os
 
 app = Flask(__name__)
 
-# Load model and tokenizer
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-Coder-480B-A35B-Instruct", trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-Coder-480B-A35B-Instruct", trust_remote_code=True)
+# Load model + tokenizer
+tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-small")
+model = AutoModelForCausalLM.from_pretrained("microsoft/DialoGPT-small")
 model.eval()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
+# Simple chat history buffer (in memory, not per-user)
+chat_history = []
+
 @app.route("/chat", methods=["POST"])
 def chat():
+    global chat_history
     data = request.get_json()
-    messages = data.get("messages")
-    if not messages or not isinstance(messages, list):
-        return jsonify({"error": "Missing or invalid 'messages' field"}), 400
+    message = data.get("message")
 
-    # Apply chat template
-    inputs = tokenizer.apply_chat_template(
-        messages,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt"
-    ).to(model.device)
+    if not message:
+        return jsonify({"error": "Missing 'message' field"}), 400
+
+    # Encode current user input
+    new_input_ids = tokenizer.encode(message + tokenizer.eos_token, return_tensors='pt').to(device)
+
+    # Combine with previous chat history
+    input_ids = new_input_ids if not chat_history else torch.cat([chat_history, new_input_ids], dim=-1)
 
     # Generate response
-    outputs = model.generate(
-        **inputs,
+    output_ids = model.generate(
+        input_ids,
         max_new_tokens=40,
-        do_sample=True,
-        temperature=0.8,
-        top_p=0.95
+        pad_token_id=tokenizer.eos_token_id
     )
 
-    # Decode and clean response
-    response = tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:])
-    clean_response = response.strip().replace("\n", " ")
+    # Update chat history
+    chat_history = output_ids
 
-    return jsonify({"response": clean_response})
+    # Decode and return response
+    response = tokenizer.decode(output_ids[:, input_ids.shape[-1]:][0], skip_special_tokens=True)
+    return jsonify({"response": response.strip()})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
